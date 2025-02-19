@@ -10,7 +10,8 @@
 #include <string.h>
 
 volatile sig_atomic_t time_expired = 0;
-volatile sig_atomic_t CONTROL_C = 0;
+
+#define STRING_SIZE 100
 
 int checkError(int val, const char *msg) {
     if (val == -1) {
@@ -28,82 +29,82 @@ void set_timer() {
     setitimer(ITIMER_REAL, &timer, NULL);
 }
 
-void signalHandler(int sig){
-    // printf("nExit (y/N)?");
+void sigHandler(int sig){
     char response;
-    write(STDOUT_FILENO, "\nExit (y/N)? ", 13);
+    printf("\nExit (y/n)?\n");
+    scanf(" %c", &response);
     read(STDIN_FILENO, &response, 1);
     if (response == 'y' || response == 'Y') {
-        CONTROL_C = 1;
+        exit(EXIT_SUCCESS);
     }
 }
 
 void timer_handler(int signum) {
     time_expired = 1;
-    write(STDOUT_FILENO, "\nTime has elapsed!\n", 20);
+    printf("\nTime has elapsed!\n");
 }
 
-int main(int argc, char *argv[])
+int main()
 {
 
     int correct = 0;
     int total = 0;
 
-    struct sigaction sa_timer, sa_int;
-    sigemptyset(&sa_int.sa_mask);
-    sa_int.sa_handler = timer_handler
-;
-    sa_int.sa_flags = 0;
+    struct sigaction sa_timer;
+    sa_timer.sa_handler = timer_handler;
+    sa_timer.sa_flags = 0;
+    sigemptyset(&sa_timer.sa_mask);
+    sigaction(SIGALRM, &sa_timer, NULL);
 
-    struct itimerval timer;
-    timer.it_value.tv_sec = 15;
-    timer.it_value.tv_usec = 0;
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = 0;
-    setitimer(ITIMER_REAL, &timer, NULL);
+    struct sigaction sa_int;
+    sa_int.sa_handler = sigHandler;
+    sa_int.sa_flags = 0;
+    sigemptyset(&sa_int.sa_mask);
+    sigaction(SIGINT, &sa_int, NULL);
 
     const char *quest_file="quest.txt";
     const char *ans_file="ans.txt";
 
-    char question[100], answer[100], user_input[100];
-    int quest_fd = checkError(open(quest_file, O_RDONLY),"Qestion text file");
-    int ans_fd = checkError(open(ans_file, O_RDONLY),"Answer text file");
+    char question[STRING_SIZE], answer[STRING_SIZE], user_input[STRING_SIZE];
+    int quest_fd = checkError(open(quest_file, O_RDONLY),"Open question text file to read");
+    int ans_fd = checkError(open(ans_file, O_RDONLY),"Open answer text file to read");
 
     printf("You're about to begin a timed quest. Each questions has a 15 sec timer. Press Control+C to exit.\n");
 
+    char question[STRING_SIZE], answer[STRING_SIZE], user_input[STRING_SIZE];
 
-    while (!CONTROL_C) {
-        int q_len = read(quest_fd, question, 100 - 1);
-        int a_len = read(ans_fd, answer, 100 - 1);
-        if (q_len <= 0 || a_len <= 0) break;
+    while (1) {
+        int quest_len = checkError(read(quest_fd, question, STRING_SIZE - 1),"Checking Read");
+        int ans_len = checkError(read(ans_fd, answer, STRING_SIZE - 1),"Checking Read");
+        if (quest_len <= 0 || ans_len <= 0) break;
         
-        question[q_len] = '\0';
-        answer[a_len] = '\0';
+        question[quest_len] = '\0';
+        answer[ans_len] = '\0';
         
-        write(STDOUT_FILENO, "\nQuestion: ", 11);
-        write(STDOUT_FILENO, question, q_len);
-        write(STDOUT_FILENO, "\nYour answer: ", 14);
+        printf("Question: %s", question);
+        write(STDOUT_FILENO, question, quest_len);
+        printf("\nYour answer: ");
         
         set_timer();
         time_expired = 0;
         
-        int read_len = read(STDIN_FILENO, user_input, 100 - 1);
+        int read_len = read(STDIN_FILENO, user_input, STRING_SIZE - 1);
         if (time_expired) {
             continue;
         }
-        user_input[read_len - 1] = '\0'; // Remove newline
+        user_input[read_len - 1] = '\0';
         
         if (strcmp(user_input, answer) == 0) {
-            write(STDOUT_FILENO, "Correct!\n", 9);
+            printf("Correct!");
             correct++;
         } else {
-            write(STDOUT_FILENO, "Wrong!\n", 7);
+            printf("WRONG!");
         }
         total++;
     }
     
-    char result[100];
-    int len = snprintf(result, 100, "\nQuiz completed. Score: %d/%d\n", correct, total);
+    char result[STRING_SIZE];
+    int len = snprintf(result, STRING_SIZE, "\nQuiz completed. Score: %d/%d\n", correct, total);
     write(STDOUT_FILENO, result, len);
 
     close(quest_fd);
