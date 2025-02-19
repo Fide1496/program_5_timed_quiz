@@ -1,25 +1,16 @@
 #include <signal.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>  
 #include <unistd.h> 
 #include <errno.h>
 #include <time.h>
+#include <string.h>
 
-
-#define BUF_SIZE 1024
-
-void child(int i){
-    pid_t pid = getpid();
-    printf("Starting child %d", i);
-
-    printf(": pid = %d\n", pid);
-
-    exit(EXIT_SUCCESS);
-}
+volatile sig_atomic_t time_expired = 0;
+volatile sig_atomic_t CONTROL_C = 0;
 
 int checkError(int val, const char *msg) {
     if (val == -1) {
@@ -28,117 +19,92 @@ int checkError(int val, const char *msg) {
     }
     return val;
 }
-
-void takeQuiz(){
-    printf("use later");
+void set_timer() {
+    struct itimerval timer;
+    timer.it_value.tv_sec = 15;
+    timer.it_value.tv_usec = 0;
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_usec = 0;
+    setitimer(ITIMER_REAL, &timer, NULL);
 }
 
 void signalHandler(int sig){
-    if(sig == SIGCHLD){
-        //Created and sent when a child terminates
-        //SIGCHLD is a normal signal so it is possible that multiple occur at the same
-        //time and only 1 is remembered. We need to clean up after a child exiting
-        //We could call wait, but wait hands, use waitpid since we can tell it not to block
-        while(waitpid,(-1, NULL, WNOHANG)>0)continue;
-        exit(EXIT_SUCCESS);
+    // printf("nExit (y/N)?");
+    char response;
+    write(STDOUT_FILENO, "\nExit (y/N)? ", 13);
+    read(STDIN_FILENO, &response, 1);
+    if (response == 'y' || response == 'Y') {
+        CONTROL_C = 1;
     }
-    if(sig == SIGUSR1){
-        printf("Testing SIGUSR1\n");
-    }
-    if (sig == SIGALRM){
-        //Child receives alarm
-        printf("Tick!\n");
-    }
+}
+
+void timer_handler(int signum) {
+    time_expired = 1;
+    write(STDOUT_FILENO, "\nTime has elapsed!\n", 20);
 }
 
 int main(int argc, char *argv[])
 {
 
-    pid_t childId[2];
-    pid_t pid;
-    int i = 0;
-    pid_t pPid;
+    int correct = 0;
+    int total = 0;
 
-    pid = getpid();
+    struct sigaction sa_timer, sa_int;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_handler = timer_handler
+;
+    sa_int.sa_flags = 0;
 
-    printf("parent pid = %d\n", pid);
-
-    struct sigaction sa;
-    struct itimerval it;
-    it.it_interval.tv_sec = 15;
-    it.it_interval.tv_usec = 0;
-    it.it_value.tv_sec = 1;
-    it.it_value.tv_usec = 0;
-   
-    sigempyset(&sa.sa_mask);
-    sa.sa_handler = signalHandler;
-    sa.sa_flags = 0;
-
-    pPid = getpid();
-
-    if(sigaction(SIGCHLD, &sa,NULL)==-1){
-        perror("Sigaction for sig chld");
-        exit(EXIT_FAILURE);
-    }
-    if(sigaction(SIGUSR1, &sa,NULL)==-1){
-        perror("Sigaction for sig usr1");
-        exit(EXIT_FAILURE);
-    }
-
-
-    switch (childId)
-    {
-    case 1:
-        /* code */
-        break;
-    case -1:
-        perror("Fork");
-        eixt(EXIT_FAILURE);
-    case 0:
-        if(sigaction(SIGALRM, *sa, NULL)== -1)
-        {
-            perror("sigaction for SIGALRM");
-            exit(EXIT_FAILURE);
-        }
-        if(setitimer(ITIMER_REAL, &it, NULL)==-1)
-        {
-            perror("setitimer");
-            exit(EXIT_FAILURE);
-        }
-        while(1){
-            pause();
-        }
-        break;
-    default:
-        while(1){
-            pause();
-        }
-        break;
-    }
-    //child id here
-
-
-    for (i=0; i<2;i++){
-        childId[i]= fork();
-        if (childId[i] == 0) {
-            child(i+1);
-        }
-        if(childId[i]==-1){
-            perror("fork");exit(EXIT_FAILURE);
-        }
-
-    }
-    sleep(5);
-
-
-
+    struct itimerval timer;
+    timer.it_value.tv_sec = 15;
+    timer.it_value.tv_usec = 0;
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_usec = 0;
+    setitimer(ITIMER_REAL, &timer, NULL);
 
     const char *quest_file="quest.txt";
     const char *ans_file="ans.txt";
 
+    char question[100], answer[100], user_input[100];
     int quest_fd = checkError(open(quest_file, O_RDONLY),"Qestion text file");
     int ans_fd = checkError(open(ans_file, O_RDONLY),"Answer text file");
 
+    printf("You're about to begin a timed quest. Each questions has a 15 sec timer. Press Control+C to exit.\n");
+
+
+    while (!CONTROL_C) {
+        int q_len = read(quest_fd, question, 100 - 1);
+        int a_len = read(ans_fd, answer, 100 - 1);
+        if (q_len <= 0 || a_len <= 0) break;
+        
+        question[q_len] = '\0';
+        answer[a_len] = '\0';
+        
+        write(STDOUT_FILENO, "\nQuestion: ", 11);
+        write(STDOUT_FILENO, question, q_len);
+        write(STDOUT_FILENO, "\nYour answer: ", 14);
+        
+        set_timer();
+        time_expired = 0;
+        
+        int read_len = read(STDIN_FILENO, user_input, 100 - 1);
+        if (time_expired) {
+            continue;
+        }
+        user_input[read_len - 1] = '\0'; // Remove newline
+        
+        if (strcmp(user_input, answer) == 0) {
+            write(STDOUT_FILENO, "Correct!\n", 9);
+            correct++;
+        } else {
+            write(STDOUT_FILENO, "Wrong!\n", 7);
+        }
+        total++;
+    }
+    
+    char result[100];
+    int len = snprintf(result, 100, "\nQuiz completed. Score: %d/%d\n", correct, total);
+    write(STDOUT_FILENO, result, len);
 
     close(quest_fd);
     close(ans_fd);
