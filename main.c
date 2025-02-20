@@ -9,9 +9,9 @@
 #include <time.h>
 #include <string.h>
 
-volatile sig_atomic_t time_expired = 0;
 
 #define STRING_SIZE 100
+volatile sig_atomic_t time_expired = 0;
 
 int checkError(int val, const char *msg) {
     if (val == -1) {
@@ -29,35 +29,49 @@ void set_timer() {
     setitimer(ITIMER_REAL, &timer, NULL);
 }
 
-void sigHandler(int sig){
+void signalHandler(int sig){
     char response;
-    printf("\nExit (y/n)?\n");
-    scanf(" %c", &response);
-    read(STDIN_FILENO, &response, 1);
-    if (response == 'y' || response == 'Y') {
-        exit(EXIT_SUCCESS);
+    if(sig == SIGINT){
+        printf("\nExit (y/n)? ");
+        scanf(" %c", &response);
+        if (response == 'y' || response == 'Y') {
+            exit(EXIT_SUCCESS);
+        }
+    }
+    if(sig == SIGALRM){
+        time_expired = 1;
+        printf("\nTime's UP!\n");
     }
 }
 
-void timer_handler(int signum) {
-    time_expired = 1;
-    printf("\nTime has elapsed!\n");
+ssize_t bytes_per_line(int fd, char *buffer, size_t max_len) {
+    size_t i = 0;
+    char c;
+    while (i < max_len - 1) {
+        ssize_t n = read(fd, &c, 1);
+        if (n <= 0) break;
+        if (c == '\n') break;
+        buffer[i++] = c;
+    }
+    buffer[i] = '\0';
+    return i;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
 
     int correct = 0;
     int total = 0;
+    int time_expired = 0;
 
     struct sigaction sa_timer;
-    sa_timer.sa_handler = timer_handler;
+    sa_timer.sa_handler = signalHandler;
     sa_timer.sa_flags = 0;
     sigemptyset(&sa_timer.sa_mask);
     sigaction(SIGALRM, &sa_timer, NULL);
 
     struct sigaction sa_int;
-    sa_int.sa_handler = sigHandler;
+    sa_int.sa_handler = signalHandler;
     sa_int.sa_flags = 0;
     sigemptyset(&sa_int.sa_mask);
     sigaction(SIGINT, &sa_int, NULL);
@@ -65,48 +79,56 @@ int main()
     const char *quest_file="quest.txt";
     const char *ans_file="ans.txt";
 
-    char question[STRING_SIZE], answer[STRING_SIZE], user_input[STRING_SIZE];
-    int quest_fd = checkError(open(quest_file, O_RDONLY),"Open question text file to read");
-    int ans_fd = checkError(open(ans_file, O_RDONLY),"Open answer text file to read");
+    int quest_fd = checkError(open(quest_file, O_RDONLY),"Qestion text file");
+    int ans_fd = checkError(open(ans_file, O_RDONLY),"Answer text file");
 
-    printf("You're about to begin a timed quest. Each questions has a 15 sec timer. Press Control+C to exit.\n");
 
+    printf("You're about to begin a timed quiz. Each question has a 15 sec timer. Press Control+C to exit.\n");
     char question[STRING_SIZE], answer[STRING_SIZE], user_input[STRING_SIZE];
 
     while (1) {
-        int quest_len = checkError(read(quest_fd, question, STRING_SIZE - 1),"Checking Read");
-        int ans_len = checkError(read(ans_fd, answer, STRING_SIZE - 1),"Checking Read");
-        if (quest_len <= 0 || ans_len <= 0) break;
-        
-        question[quest_len] = '\0';
-        answer[ans_len] = '\0';
-        
-        printf("Question: %s", question);
-        write(STDOUT_FILENO, question, quest_len);
+        // Read question and answer lines and make sure aren't empty character arrays
+        if (bytes_per_line(quest_fd, question, STRING_SIZE) <= 0 ||
+        bytes_per_line(ans_fd, answer, STRING_SIZE) <= 0) {
+            break;  
+        }
+
+        // Display question and prompt user for input
+        printf("\nQuestion: %s", question);
         printf("\nYour answer: ");
-        
-        set_timer();
+        fflush(stdout);
+
+        set_timer(); 
         time_expired = 0;
-        
-        int read_len = read(STDIN_FILENO, user_input, STRING_SIZE - 1);
+
+        // Read in user input
+        ssize_t read_len = read(STDIN_FILENO, user_input, STRING_SIZE - 1);
+
+        // Handle timer running out
         if (time_expired) {
+            total++;
+            printf("\nTime has elapsed.\n");
+            time_expired = 0;
             continue;
         }
+
+        // Handle new line in user input
         user_input[read_len - 1] = '\0';
-        
-        if (strcmp(user_input, answer) == 0) {
-            printf("Correct!");
+
+        // Compare user input to answer from answer file
+        if (strcasecmp(user_input, answer) == 0) {
+            printf("Correct!\n");
             correct++;
         } else {
-            printf("WRONG!");
+            printf("Wrong!\n");
         }
         total++;
     }
-    
-    char result[STRING_SIZE];
-    int len = snprintf(result, STRING_SIZE, "\nQuiz completed. Score: %d/%d\n", correct, total);
-    write(STDOUT_FILENO, result, len);
 
+    // Print quiz results
+    printf("\nQuiz completed. Score: %d/%d\n", correct, total);
+
+    // Close input files
     close(quest_fd);
     close(ans_fd);
     
